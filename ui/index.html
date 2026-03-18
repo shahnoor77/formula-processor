@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tag Processor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { margin-bottom: 30px; color: #60a5fa; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .card {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #334155;
+        }
+        .card h2 { color: #94a3b8; font-size: 14px; margin-bottom: 10px; text-transform: uppercase; }
+        .metric { font-size: 32px; font-weight: bold; color: #60a5fa; }
+        .metric-label { font-size: 12px; color: #64748b; margin-top: 5px; }
+        table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 8px; overflow: hidden; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #334155; }
+        th { background: #334155; color: #94a3b8; font-weight: 600; font-size: 12px; text-transform: uppercase; }
+        td { color: #e2e8f0; }
+        .status { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .status.good { background: #065f46; color: #6ee7b7; }
+        .status.bad { background: #7f1d1d; color: #fca5a5; }
+        .refresh { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; margin-bottom: 20px; }
+        .refresh:hover { background: #2563eb; }
+        .timestamp { color: #64748b; font-size: 12px; }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #334155; }
+        .tab { padding: 10px 20px; cursor: pointer; color: #94a3b8; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+        .tab.active { color: #60a5fa; border-bottom-color: #60a5fa; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; color: #94a3b8; font-size: 14px; }
+        .form-group input, .form-group select { width: 100%; padding: 8px; background: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #e2e8f0; }
+        .btn { padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-size: 14px; }
+        .btn-success { background: #059669; color: white; }
+        .btn-success:hover { background: #047857; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏭 Tag Processor</h1>
+        
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('dashboard')">Dashboard</div>
+            <div class="tab" onclick="switchTab('formulas')">Formulas</div>
+        </div>
+        
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content active">
+            <button class="refresh" onclick="loadDashboard()">Refresh Data</button>
+            
+            <div class="grid">
+                <div class="card">
+                    <h2>Total Tags</h2>
+                    <div class="metric" id="totalTags">-</div>
+                    <div class="metric-label">Registered in system</div>
+                </div>
+                <div class="card">
+                    <h2>Processing Rate</h2>
+                    <div class="metric" id="tagsPerSecond">-</div>
+                    <div class="metric-label">Tags per second</div>
+                </div>
+                <div class="card">
+                    <h2>Database Lag</h2>
+                    <div class="metric" id="dbLag">-</div>
+                    <div class="metric-label">Records behind</div>
+                </div>
+                <div class="card">
+                    <h2>Batches Processed</h2>
+                    <div class="metric" id="batchesProcessed">-</div>
+                    <div class="metric-label">Total batches</div>
+                </div>
+                <div class="card">
+                    <h2>Avg Batch Time</h2>
+                    <div class="metric" id="avgBatchTime">-</div>
+                    <div class="metric-label">Milliseconds</div>
+                </div>
+                <div class="card">
+                    <h2>Uptime</h2>
+                    <div class="metric" id="uptime">-</div>
+                    <div class="metric-label">Seconds</div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Live Tag Values (Top 10)</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Tag ID</th>
+                            <th>Tag Name</th>
+                            <th>Value</th>
+                            <th>Quality</th>
+                            <th>Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tagTable">
+                        <tr><td colspan="5" style="text-align: center; color: #64748b;">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Formulas Tab -->
+        <div id="formulas" class="tab-content">
+            <div class="card" style="margin-bottom: 20px;">
+                <h2>Execute Formula on Tags</h2>
+                <form id="formulaForm" onsubmit="executeFormula(event)">
+                    <div class="form-group">
+                        <label>Select Formula</label>
+                        <select id="formulaSelect" required onchange="updateFormulaInfo()">
+                            <option value="">-- Select a Formula --</option>
+                        </select>
+                        <div id="formulaInfo" style="margin-top: 10px; color: #94a3b8; font-size: 14px;"></div>
+                    </div>
+                    <div class="form-group">
+                        <label>Select Tags (hold Ctrl/Cmd for multiple)</label>
+                        <select id="tagSelect" multiple size="10" required style="height: 200px;">
+                        </select>
+                        <div style="margin-top: 5px; color: #64748b; font-size: 12px;">
+                            Selected: <span id="selectedCount">0</span> tags
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-success">Execute Formula</button>
+                </form>
+            </div>
+            
+            <div class="card">
+                <h2>Recent Calculations</h2>
+                <div id="calculationHistory">
+                    <p style="text-align: center; color: #64748b;">Loading...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let currentTab = 'dashboard';
+        
+        function switchTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tab).classList.add('active');
+            
+            if (tab === 'dashboard') {
+                loadDashboard();
+            } else if (tab === 'formulas') {
+                loadFormulas();
+            }
+        }
+        
+        async function loadDashboard() {
+            try {
+                const statsRes = await fetch(`${API_BASE}/system/stats`);
+                const stats = await statsRes.json();
+                
+                document.getElementById('totalTags').textContent = stats.total_tags;
+                document.getElementById('tagsPerSecond').textContent = stats.tags_per_second.toFixed(2);
+                document.getElementById('dbLag').textContent = stats.db_lag;
+                document.getElementById('batchesProcessed').textContent = stats.batches_processed;
+                document.getElementById('avgBatchTime').textContent = stats.avg_batch_time_ms.toFixed(2);
+                document.getElementById('uptime').textContent = stats.uptime_seconds.toFixed(0);
+                
+                const tagsRes = await fetch(`${API_BASE}/tags/live`);
+                const tags = await tagsRes.json();
+                
+                const tbody = document.getElementById('tagTable');
+                if (tags.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #64748b;">No tags available</td></tr>';
+                } else {
+                    const topTags = tags.slice(0, 10);
+                    tbody.innerHTML = topTags.map(tag => `
+                        <tr>
+                            <td>${tag.tag_id}</td>
+                            <td>${tag.tag_name}</td>
+                            <td>${tag.value.toFixed(2)}</td>
+                            <td><span class="status ${tag.quality === 'GOOD' ? 'good' : 'bad'}">${tag.quality}</span></td>
+                            <td class="timestamp">${new Date(tag.timestamp).toLocaleString()}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (error) {
+                console.error('Error loading data:', error);
+            }
+        }
+        
+        async function loadFormulas() {
+            try {
+                const formulasRes = await fetch(`${API_BASE}/formulas`);
+                const formulas = await formulasRes.json();
+                
+                const selectEl = document.getElementById('formulaSelect');
+                selectEl.innerHTML = '<option value="">-- Select a Formula --</option>';
+                formulas.forEach(f => {
+                    const option = document.createElement('option');
+                    option.value = f.id;
+                    option.textContent = f.name;
+                    option.dataset.description = f.description;
+                    option.dataset.requiredTags = f.required_tags;
+                    selectEl.appendChild(option);
+                });
+                
+                // Load only tags that are in Redis (have live values)
+                const tagsRes = await fetch(`${API_BASE}/tags/live`);
+                const tags = await tagsRes.json();
+                
+                const tagSelectEl = document.getElementById('tagSelect');
+                tagSelectEl.innerHTML = '';
+                
+                if (tags.length === 0) {
+                    tagSelectEl.innerHTML = '<option disabled>No live tags available</option>';
+                } else {
+                    tags.forEach(t => {
+                        const option = document.createElement('option');
+                        option.value = t.tag_id;
+                        option.textContent = `${t.tag_name} (ID: ${t.tag_id}) - Value: ${t.value.toFixed(2)}`;
+                        tagSelectEl.appendChild(option);
+                    });
+                }
+                
+                await loadCalculationHistory();
+                
+            } catch (error) {
+                console.error('Error loading formulas:', error);
+            }
+        }
+        
+        function updateFormulaInfo() {
+            const selectEl = document.getElementById('formulaSelect');
+            const selectedOption = selectEl.options[selectEl.selectedIndex];
+            const infoEl = document.getElementById('formulaInfo');
+            
+            if (selectedOption.value) {
+                const desc = selectedOption.dataset.description;
+                const required = selectedOption.dataset.requiredTags;
+                infoEl.innerHTML = `<strong>Description:</strong> ${desc}<br><strong>Required Tags:</strong> At least ${required}`;
+            } else {
+                infoEl.innerHTML = '';
+            }
+        }
+        
+        document.getElementById('tagSelect').addEventListener('change', function() {
+            const count = this.selectedOptions.length;
+            document.getElementById('selectedCount').textContent = count;
+        });
+        
+        async function executeFormula(event) {
+            event.preventDefault();
+            
+            const formulaId = document.getElementById('formulaSelect').value;
+            const tagSelect = document.getElementById('tagSelect');
+            const tagIds = Array.from(tagSelect.selectedOptions).map(opt => parseInt(opt.value));
+            
+            if (!formulaId) {
+                alert('Please select a formula');
+                return;
+            }
+            
+            if (tagIds.length === 0) {
+                alert('Please select at least one tag');
+                return;
+            }
+            
+            try {
+                const res = await fetch(`${API_BASE}/formulas/execute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ formula_id: formulaId, tag_ids: tagIds })
+                });
+                
+                if (res.ok) {
+                    const result = await res.json();
+                    alert(`Formula executed successfully!\n\nResult: ${result.result_value.toFixed(4)}\nExecution Time: ${result.execution_time_ms.toFixed(2)} ms`);
+                    await loadCalculationHistory();
+                } else {
+                    const error = await res.json();
+                    alert('Error: ' + (error.detail || 'Failed to execute formula'));
+                }
+            } catch (error) {
+                console.error('Error executing formula:', error);
+                alert('Error executing formula');
+            }
+        }
+        
+        async function loadCalculationHistory() {
+            try {
+                const res = await fetch(`${API_BASE}/formulas/history/recent?limit=20`);
+                const history = await res.json();
+                
+                const historyDiv = document.getElementById('calculationHistory');
+                
+                if (history.length === 0) {
+                    historyDiv.innerHTML = '<p style="text-align: center; color: #64748b;">No calculations yet</p>';
+                } else {
+                    historyDiv.innerHTML = `
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Formula</th>
+                                    <th>Result</th>
+                                    <th>Execution Time</th>
+                                    <th>Calculated At</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${history.map(h => `
+                                    <tr>
+                                        <td>${h.formula_id}</td>
+                                        <td>${h.result_value.toFixed(4)}</td>
+                                        <td>${h.execution_time_ms.toFixed(2)} ms</td>
+                                        <td class="timestamp">${new Date(h.calculated_at).toLocaleString()}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading calculation history:', error);
+            }
+        }
+        
+        loadDashboard();
+        
+        setInterval(() => {
+            if (currentTab === 'dashboard') {
+                loadDashboard();
+            } else if (currentTab === 'formulas') {
+                loadCalculationHistory();
+            }
+        }, 2000);
+    </script>
+</body>
+</html>

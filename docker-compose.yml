@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: tag_processor_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tag_processor_network
+    restart: unless-stopped
+
+  processor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tag_processor
+    environment:
+      - DB_SERVER=test_sqlserver_target
+      - DB_PORT=1433
+      - DB_DATABASE=TestDB
+      - DB_USERNAME=sa
+      - DB_PASSWORD=TestPass123!
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - BATCH_SIZE=500
+      - POLL_INTERVAL_MS=300
+      - SERVICE_NAME=tag_processor
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - tag_processor_network
+      - data-sync_sensor_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/system/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  ui:
+    image: nginx:alpine
+    container_name: tag_processor_ui
+    ports:
+      - "8080:80"
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+    networks:
+      - tag_processor_network
+    restart: unless-stopped
+
+networks:
+  tag_processor_network:
+    driver: bridge
+  data-sync_sensor_network:
+    external: true
+
+volumes:
+  redis_data:

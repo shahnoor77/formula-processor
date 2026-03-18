@@ -1,9 +1,9 @@
-"""System monitoring and health endpoints."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Query
 import structlog
 
-from core.batch_loader import batch_loader
-from core.models import SystemStats
+from core.formula_processor_service import formula_processor_service
+from core.config import settings
+from infra.db_connection import db
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/system", tags=["system"])
@@ -11,33 +11,40 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 @router.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "service": "tag-processor"
-    }
+    return {"status": "healthy"}
 
 
-@router.get("/stats", response_model=SystemStats)
+@router.get("/stats")
 async def get_system_stats():
-    """Get system statistics."""
-    try:
-        stats = batch_loader.get_stats()
-        return SystemStats(**stats)
-    except Exception as e:
-        logger.error("get_stats_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+    return formula_processor_service.get_stats()
 
 
-@router.post("/process-batch")
-async def trigger_batch_processing():
-    """Manually trigger batch processing (for testing)."""
+@router.get("/raw-data")
+async def get_raw_data(limit: int = Query(20, le=200)):
     try:
-        metrics = batch_loader.run_once()
+        with db.cursor() as cursor:
+            cursor.execute(f"SELECT TOP (?) Id, NodeId, value, timestamp, quality FROM {settings.table_source} ORDER BY Id DESC", (limit,))
+            rows = cursor.fetchall()
+            cursor.execute(f"SELECT COUNT(*) as cnt FROM {settings.table_source} WHERE timestamp >= DATEADD(SECOND, -1, GETUTCDATE())")
+            rate = cursor.fetchone()
+            cursor.execute(f"SELECT COUNT(DISTINCT NodeId) as n FROM {settings.table_source}")
+            nodes = cursor.fetchone()
+
         return {
-            "status": "success",
-            "metrics": metrics.model_dump()
+            "tags_per_second": rate.cnt if rate else 0,
+            "distinct_nodes": nodes.n if nodes else 0,
+            "rows": [
+                {
+                    "id": r.Id,
+                    "node_id": r.NodeId,
+                    "alias": r.NodeId.split(".")[-1] if r.NodeId else "",
+                    "value": float(r.value) if r.value is not None else None,
+                    "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+                    "quality": r.quality
+                }
+                for r in rows
+            ]
         }
     except Exception as e:
-        logger.error("manual_batch_error", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("raw_data_error", error=str(e))
+        return {"tags_per_second": 0, "distinct_nodes": 0, "rows": []}

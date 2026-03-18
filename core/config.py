@@ -1,41 +1,34 @@
-"""Configuration management."""
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings."""
-    
-    # Database
     db_server: str = "localhost"
     db_port: int = 1433
-    db_database: str = "TestDB"
+    db_database: str = "CorxNew"
     db_username: str = "sa"
-    db_password: str = "TestPass123!"
-    
-    # Redis
-    redis_host: str = "localhost"
-    redis_port: int = 6379
-    redis_db: int = 0
-    redis_password: str = ""
-    
-    # Processing
-    batch_size: int = 500
-    poll_interval_ms: int = 300
-    service_name: str = "tag_processor"
-    
-    # API
+    db_password: str = ""
+
+    batch_size: int = 200
+    poll_interval_ms: int = 1000
+    service_name: str = "formula_processor"
+    num_workers: int = 4
+
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    
-    # Monitoring
-    enable_metrics: bool = True
-    metrics_port: int = 9090
-    
+
+    table_source: str = "MQTT_OPC_UA_Data"
+    table_variables: str = "Variables"
+    table_executions: str = "Executions"
+    table_failed_executions: str = "FailedExecutions"
+    table_processing_state: str = "ProcessingState"
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
-    
+
     @property
     def connection_string(self) -> str:
-        """Build SQL Server connection string."""
         return (
             f"DRIVER={{ODBC Driver 18 for SQL Server}};"
             f"SERVER={self.db_server},{self.db_port};"
@@ -45,13 +38,6 @@ class Settings(BaseSettings):
             f"TrustServerCertificate=yes;"
             f"Connection Timeout=30;"
         )
-    
-    @property
-    def redis_url(self) -> str:
-        """Build Redis connection URL."""
-        if self.redis_password:
-            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
-        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
 
 settings = Settings()

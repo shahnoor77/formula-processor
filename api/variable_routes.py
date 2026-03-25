@@ -17,7 +17,7 @@ async def list_formulas():
             cursor.execute(f"""
                 SELECT VariableId, VariableName, PreSaveFormula, FormulaType, Time AS Interval
                 FROM {settings.table_variables}
-                WHERE IsDeleted = 0 AND FormulaType = 'SINGLE'
+                WHERE IsDeleted = 0 AND PreSaveFormula IS NOT NULL AND PreSaveFormula != ''
                 ORDER BY VariableName
             """)
             rows = cursor.fetchall()

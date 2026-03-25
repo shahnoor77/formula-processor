@@ -1,4 +1,5 @@
-from typing import List, Tuple
+import re
+from typing import List, Tuple, Dict
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import structlog
@@ -22,7 +23,32 @@ class TagRecord:
         self.quality = quality
 
 
-def process_tag_formulas(tag: TagRecord, formulas: List, interval: int) -> List[dict]:
+def fetch_all_latest_values() -> Dict[str, float]:
+    """Fetch the latest value for every node in the source table."""
+    query = f"""
+    SELECT t.NodeId, t.value
+    FROM {settings.table_source} t
+    INNER JOIN (
+        SELECT NodeId, MAX(Id) as MaxId
+        FROM {settings.table_source}
+        GROUP BY NodeId
+    ) latest ON t.NodeId = latest.NodeId AND t.Id = latest.MaxId
+    """
+    result = {}
+    try:
+        with db.cursor() as cursor:
+            cursor.execute(query)
+            for row in cursor.fetchall():
+                try:
+                    result[row.NodeId] = float(row.value)
+                except (TypeError, ValueError):
+                    pass
+    except Exception as e:
+        logger.error("fetch_all_latest_values_error", error=str(e))
+    return result
+
+
+def process_tag_formulas(tag: TagRecord, formulas: List, interval: int, latest_values: Dict[str, float]) -> List[dict]:
     results = []
     processed_on = datetime.now(timezone.utc)
     bracketed = f'[{tag.node_id}]'
@@ -31,9 +57,30 @@ def process_tag_formulas(tag: TagRecord, formulas: List, interval: int) -> List[
         if bracketed not in formula_info.formula:
             continue
 
-        resolved_formula = formula_info.formula.replace(bracketed, str(tag.value))
-        result, error = formula_executor.execute_single(resolved_formula, tag.value)
+        resolved = formula_info.formula.replace(bracketed, str(tag.value))
 
+        remaining = re.findall(r'\[([^\]]+)\]', resolved)
+        skip = False
+        for node_id in remaining:
+            if node_id in latest_values:
+                resolved = resolved.replace(f'[{node_id}]', str(latest_values[node_id]))
+            else:
+                results.append({
+                    'variable_id': formula_info.variable_id,
+                    'result': None,
+                    'error': f'UNRESOLVED_NODE: {node_id}',
+                    'result_on': tag.timestamp,
+                    'processed_on': processed_on,
+                    'interval': interval,
+                    'created_by': 'system',
+                    'tag_id': tag.id
+                })
+                skip = True
+                break
+        if skip:
+            continue
+
+        result, error = formula_executor.execute_single(resolved, tag.value)
         results.append({
             'variable_id': formula_info.variable_id,
             'result': str(result) if error is None else None,
@@ -135,11 +182,7 @@ class TagBatchProcessor:
             if tags:
                 if self._processing_start_time is None:
                     self._processing_start_time = datetime.utcnow()
-                logger.info("batch_fetched",
-                            count=len(tags),
-                            last_processed_id=self._last_processed_id,
-                            first_id=tags[0].id,
-                            last_id=tags[-1].id)
+                logger.info("batch_fetched", count=len(tags), first_id=tags[0].id, last_id=tags[-1].id)
             else:
                 if self._processing_start_time is not None:
                     elapsed = (datetime.utcnow() - self._processing_start_time).total_seconds()
@@ -162,23 +205,21 @@ class TagBatchProcessor:
         if not tags:
             return 0, 0
 
-        single_formulas = formula_loader.get_single_formulas()
-        if not single_formulas:
+        formulas = formula_loader.get_single_formulas() + formula_loader.get_pair_formulas()
+        if not formulas:
             logger.warning("no_formulas_loaded")
             return 0, 0
 
-        logger.info("executing_formulas",
-                    tag_count=len(tags),
-                    formula_count=len(single_formulas),
-                    workers=self.num_workers)
+        logger.info("executing_formulas", tag_count=len(tags), formula_count=len(formulas))
 
         all_results = []
         current_interval = self._current_interval
+        latest_values = fetch_all_latest_values()
 
         try:
             with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
                 futures = {
-                    executor.submit(process_tag_formulas, tag, single_formulas, current_interval): tag
+                    executor.submit(process_tag_formulas, tag, formulas, current_interval, latest_values): tag
                     for tag in tags
                 }
                 for future in as_completed(futures):
@@ -189,15 +230,15 @@ class TagBatchProcessor:
         except Exception as e:
             logger.error("threading_error", error=str(e))
             for tag in tags:
-                all_results.extend(process_tag_formulas(tag, single_formulas, current_interval))
+                all_results.extend(process_tag_formulas(tag, formulas, current_interval, latest_values))
 
         successful = [r for r in all_results if r['error'] is None]
         failed = [r for r in all_results if r['error'] is not None]
 
-        logger.info("formulas_executed", total=len(all_results), successful=len(successful), failed=len(failed))
+        logger.info("formulas_executed", successful=len(successful), failed=len(failed))
 
         if failed:
-            logger.warning("formula_failures", count=len(failed), samples=[r['error'] for r in failed[:5]])
+            logger.warning("formula_failures", count=len(failed), samples=[r['error'] for r in failed[:3]])
 
         last_id = tags[-1].id
         try:
@@ -205,10 +246,10 @@ class TagBatchProcessor:
             self._last_processed_id = last_id
             self._total_tags_in_run += len(tags)
             logger.info("batch_processed",
-                        tags_processed=len(tags),
-                        successful_executions=len(successful),
-                        failed_executions=len(failed),
-                        last_id=last_id)
+                    tags=len(tags),
+                    successful=len(successful),
+                    failed=len(failed),
+                    last_id=last_id)
             return len(tags), len(successful)
         except Exception as e:
             logger.error("transaction_failed", error=str(e))
@@ -221,10 +262,14 @@ class TagBatchProcessor:
 
             if successful:
                 insert_sql = f"""
-                INSERT INTO {settings.table_executions} (VariableId, Result, ResultOn, ProcessedOn, Interval, CreatedBy, CreatedOn, IsDeleted)
-                VALUES (?, ?, ?, ?, ?, ?, GETUTCDATE(), 0)
+                INSERT INTO {settings.table_executions}
+                    (VariableId, Result, ResultOn, ProcessedOn, CreatedBy, CreatedOn, IsDeleted)
+                VALUES (?, ?, ?, ?, ?, GETUTCDATE(), 0)
                 """
-                data = [(r['variable_id'], r['result'], r['result_on'], r['processed_on'], r['interval'], r['created_by']) for r in successful]
+                data = [
+                    (r['variable_id'], r['result'], r['result_on'], r['processed_on'], r['created_by'])
+                    for r in successful
+                ]
                 cursor.fast_executemany = True
                 cursor.executemany(insert_sql, data)
                 logger.info("results_saved", count=len(successful))

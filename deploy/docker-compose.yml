@@ -1,0 +1,9 @@
+services:
+  api:
+    image: shahnoor77/formula-processor:v2
+    container_name: formula_processor
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: unless-stopped

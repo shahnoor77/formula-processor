@@ -45,3 +45,7 @@ app.add_middleware(
 
 app.include_router(system_router)
 app.include_router(variable_router)
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "docs": "/docs"}

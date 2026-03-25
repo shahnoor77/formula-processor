@@ -89,12 +89,18 @@ class DatabaseConnection:
 
     @contextmanager
     def cursor(self):
-        self.connect()
-        cursor = self._conn.cursor()
+        # Each call gets its own connection from the pool to avoid thread conflicts
+        conn = self._pool.get_connection()
+        cursor = conn.cursor()
         try:
             yield cursor
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             cursor.close()
+            self._pool.return_connection(conn)
 
     def commit(self) -> None:
         if self._conn:

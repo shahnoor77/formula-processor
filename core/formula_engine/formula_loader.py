@@ -28,7 +28,6 @@ class FormulaLoader:
         WHERE IsDeleted = 0
           AND PreSaveFormula IS NOT NULL
           AND PreSaveFormula != ''
-          AND FormulaType IN ('SINGLE', 'PAIR')
         """
         with db.cursor() as cursor:
             cursor.execute(query)
@@ -41,15 +40,12 @@ class FormulaLoader:
                 info = FormulaInfo(
                     variable_id=row.VariableId,
                     formula=row.PreSaveFormula,
-                    formula_type=row.FormulaType
+                    formula_type=row.FormulaType or 'SINGLE'
                 )
-                if row.FormulaType == 'SINGLE':
-                    self.single_formulas.append(info)
-                elif row.FormulaType == 'PAIR':
-                    self.pair_formulas.append(info)
+                self.single_formulas.append(info)
 
             self._last_refresh = datetime.utcnow()
-            logger.info("formulas_loaded", single=len(self.single_formulas), pair=len(self.pair_formulas))
+            logger.info("formulas_loaded", total=len(self.single_formulas))
 
     def refresh_if_needed(self, refresh_interval_seconds: int = 30) -> None:
         elapsed = (datetime.utcnow() - self._last_refresh).total_seconds()

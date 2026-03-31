@@ -1,6 +1,6 @@
 services:
   api:
-    image: shahnoor77/formula-processor:v2
+    image: shahnoor77/formula-processor:v7
     container_name: formula_processor
     ports:
       - "8000:8000"

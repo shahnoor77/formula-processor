@@ -1,4 +1,5 @@
-from typing import List, Dict
+import re
+from typing import List, Dict, Optional
 from datetime import datetime
 import structlog
 
@@ -9,10 +10,29 @@ logger = structlog.get_logger()
 
 
 class FormulaInfo:
-    def __init__(self, variable_id: int, formula: str, formula_type: str):
+    def __init__(self, variable_id: int, formula: str, formula_type: str,
+                 time_window: int = 0, time_interval: Optional[datetime] = None):
         self.variable_id = variable_id
         self.formula = formula
         self.formula_type = formula_type
+        self.time_window = time_window
+        self.time_interval = time_interval
+
+    @property
+    def is_windowed(self) -> bool:
+        """Windowed if Time > 0, regardless of formula syntax."""
+        return self.time_window > 0
+
+    @property
+    def is_due(self) -> bool:
+        if not self.is_windowed:
+            return True
+        if self.time_interval is None:
+            return True
+        deadline = self.time_interval
+        if hasattr(deadline, 'tzinfo') and deadline.tzinfo:
+            deadline = deadline.replace(tzinfo=None)
+        return datetime.utcnow() >= deadline
 
 
 class FormulaLoader:
@@ -23,7 +43,9 @@ class FormulaLoader:
 
     def load_formulas(self) -> None:
         query = f"""
-        SELECT VariableId, PreSaveFormula, FormulaType
+        SELECT VariableId, PreSaveFormula, FormulaType,
+               ISNULL(Time, 0) AS TimeWindow,
+               TimeInterval
         FROM {settings.table_variables}
         WHERE IsDeleted = 0
           AND PreSaveFormula IS NOT NULL
@@ -40,7 +62,9 @@ class FormulaLoader:
                 info = FormulaInfo(
                     variable_id=row.VariableId,
                     formula=row.PreSaveFormula,
-                    formula_type=row.FormulaType or 'SINGLE'
+                    formula_type=row.FormulaType or 'SINGLE',
+                    time_window=int(row.TimeWindow) if row.TimeWindow else 0,
+                    time_interval=row.TimeInterval
                 )
                 self.single_formulas.append(info)
 

@@ -18,12 +18,7 @@ class ConnectionPool:
         self._pool: Queue = Queue(maxsize=pool_size + max_overflow)
         self._current_size = 0
         self._lock = Lock()
-
-        for _ in range(pool_size):
-            conn = self._create_connection()
-            self._pool.put(conn)
-            self._current_size += 1
-
+        # Lazy init — don't connect at startup
         logger.info("connection_pool_initialized", pool_size=pool_size, max_overflow=max_overflow)
 
     def _create_connection(self) -> pyodbc.Connection:

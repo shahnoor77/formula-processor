@@ -28,10 +28,18 @@ SAFE_COMPARISONS = {
 }
 
 def _avg(*args):
+    if len(args) == 1:
+        # AVG of a single value just returns that value
+        return float(args[0])
     return sum(args) / len(args) if args else 0.0
 
 def _iif(condition, true_val, false_val):
     return true_val if condition else false_val
+
+def _sum(*args):
+    if len(args) == 1 and hasattr(args[0], '__iter__'):
+        return sum(args[0])
+    return sum(args)
 
 SAFE_FUNCTIONS = {
     # Math
@@ -41,7 +49,7 @@ SAFE_FUNCTIONS = {
     'exp': math.exp, 'sin': math.sin, 'cos': math.cos, 'tan': math.tan,
     # Aggregates
     'avg': _avg, 'AVG': _avg, 'average': _avg, 'AVERAGE': _avg,
-    'sum': sum, 'SUM': sum,
+    'sum': _sum, 'SUM': _sum,
     # Conditional helpers
     'iif': _iif, 'IIF': _iif,
 }
